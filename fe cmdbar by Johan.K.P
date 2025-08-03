@@ -1,0 +1,618 @@
+--// Services
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local TeleportService = game:GetService("TeleportService")
+local StarterGui = game:GetService("StarterGui")
+
+--// Player Setup--// Services
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local TeleportService = game:GetService("TeleportService")
+local StarterGui = game:GetService("StarterGui")
+
+--// Player Setup
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local rootPart = character:WaitForChild("HumanoidRootPart")
+
+local lastRepositionCFrame = rootPart.CFrame
+local storedTools = {}
+
+-- Noclip variables
+local noclipEnabled = false
+local noclipConnection = nil
+
+-- Update character on respawn
+player.CharacterAdded:Connect(function(char)
+    character = char
+    humanoid = character:WaitForChild("Humanoid")
+    rootPart = character:WaitForChild("HumanoidRootPart")
+
+    task.wait()
+    if lastRepositionCFrame then
+        rootPart.CFrame = lastRepositionCFrame
+    end
+
+    -- Restore tools
+    for _, tool in ipairs(storedTools) do
+        tool.Parent = player:WaitForChild("Backpack")
+    end
+    storedTools = {}
+
+    -- Auto-disable noclip on respawn
+    disableNoclip()
+end)
+
+--// Variables
+local isVanished = false
+local originalCFrame = nil
+local vanishBodyPos = nil
+local commandPrefix = "/"
+local spectateTarget = nil
+local spectateConnection = nil
+local camera = workspace.CurrentCamera
+local originalCameraSubject = camera.CameraSubject
+
+--// GUI Setup
+local screenGui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
+screenGui.Name = "CommandBarGui"
+screenGui.ResetOnSpawn = false
+
+local commandBar = Instance.new("TextBox")
+commandBar.Size = UDim2.new(1, 0, 0, 24)
+commandBar.Position = UDim2.new(0, 0, 0, -12)
+commandBar.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+commandBar.TextColor3 = Color3.fromRGB(255, 255, 255)
+commandBar.Font = Enum.Font.SourceSans
+commandBar.TextSize = 18
+commandBar.ClearTextOnFocus = true
+commandBar.Visible = false
+commandBar.TextTransparency = 1
+commandBar.BackgroundTransparency = 0.5
+commandBar.Parent = screenGui
+Instance.new("UICorner", commandBar).CornerRadius = UDim.new(0, 6)
+
+local suggestionFrame = Instance.new("Frame", screenGui)
+suggestionFrame.Size = UDim2.new(1, 0, 0, 90)
+suggestionFrame.Position = UDim2.new(0, 0, 0, 16)
+suggestionFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+suggestionFrame.Visible = false
+suggestionFrame.BackgroundTransparency = 0.5
+Instance.new("UICorner", suggestionFrame).CornerRadius = UDim.new(0, 6)
+
+local suggestionLabel = Instance.new("TextLabel", suggestionFrame)
+suggestionLabel.Size = UDim2.new(1, -10, 1, -10)
+suggestionLabel.Position = UDim2.new(0, 5, 0, 5)
+suggestionLabel.BackgroundTransparency = 1
+suggestionLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+suggestionLabel.Font = Enum.Font.SourceSans
+suggestionLabel.TextSize = 16
+suggestionLabel.TextXAlignment = Enum.TextXAlignment.Left
+suggestionLabel.TextYAlignment = Enum.TextYAlignment.Top
+suggestionLabel.TextWrapped = true
+
+local commandPanel = Instance.new("Frame", screenGui)
+commandPanel.Size = UDim2.new(0, 300, 0, 300)
+commandPanel.Position = UDim2.new(0.5, -150, 0.5, -150)
+commandPanel.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+commandPanel.Visible = false
+commandPanel.BackgroundTransparency = 0.1
+Instance.new("UICorner", commandPanel).CornerRadius = UDim.new(0, 6)
+
+local closeButton = Instance.new("TextButton", commandPanel)
+closeButton.Size = UDim2.new(0, 24, 0, 24)
+closeButton.Position = UDim2.new(1, -28, 0, 4)
+closeButton.Text = "X"
+closeButton.TextColor3 = Color3.fromRGB(255, 100, 100)
+closeButton.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+closeButton.Font = Enum.Font.SourceSansBold
+closeButton.TextSize = 16
+Instance.new("UICorner", closeButton).CornerRadius = UDim.new(0, 4)
+
+local commandListLabel = Instance.new("TextLabel", commandPanel)
+commandListLabel.Size = UDim2.new(1, -10, 1, -40)
+commandListLabel.Position = UDim2.new(0, 5, 0, 30)
+commandListLabel.BackgroundTransparency = 1
+commandListLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+commandListLabel.Font = Enum.Font.SourceSans
+commandListLabel.TextSize = 16
+commandListLabel.TextXAlignment = Enum.TextXAlignment.Left
+commandListLabel.TextYAlignment = Enum.TextYAlignment.Top
+commandListLabel.TextWrapped = true
+
+local availableCommands = {
+    "vanish", "unvanish", "goto <player>", "tp <player>", "to <player>",
+    "prefix <symbol>", "spectate <player>", "unspectate",
+    "commands", "cmds", "re", "heal", "noclip", "unnoclip", "rejoin", "kick <player> <reason>", "dex", "telekinesis", "antivoid", "grabknife", "servermenu", "jumppower <numbers>", "speed numbers", "clicktp", "antiteleport", "antifling", "feserveradmin", "antiafk", "clientnukeclear", "Backdoor", "view", "unview", "aimviewerspanel", "fefakelag", "infjump", "clientserveradmin", "fechatadmin"
+}
+commandListLabel.Text = table.concat(availableCommands, "\n")
+suggestionLabel.Text = table.concat(availableCommands, "\n")
+
+closeButton.MouseButton1Click:Connect(function()
+    commandPanel.Visible = false
+end)
+
+local function updatePlaceholder()
+    local prefixDisplay = commandPrefix == "" and "(none)" or commandPrefix
+    commandBar.PlaceholderText = "Type commands here (e.g. " .. prefixDisplay .. "vanish, " .. prefixDisplay .. "goto)"
+end
+updatePlaceholder()
+
+--// Commands
+local function vanish()
+    if isVanished or not rootPart or not humanoid then return end
+    originalCFrame = rootPart.CFrame
+    rootPart.CFrame = CFrame.new(rootPart.Position.X, 50000, rootPart.Position.Z)
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.CanCollide = false
+        end
+    end
+    humanoid.PlatformStand = true
+    if vanishBodyPos then vanishBodyPos:Destroy() end
+    vanishBodyPos = Instance.new("BodyPosition", rootPart)
+    vanishBodyPos.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+    vanishBodyPos.Position = rootPart.Position
+    isVanished = true
+end
+
+local function unvanish()
+    if not isVanished then return end
+    if originalCFrame then rootPart.CFrame = originalCFrame end
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.CanCollide = true
+        end
+    end
+    humanoid.PlatformStand = false
+    if vanishBodyPos then vanishBodyPos:Destroy() vanishBodyPos = nil end
+    isVanished = false
+end
+
+local function enableNoclip()
+    if noclipEnabled then return end
+    noclipEnabled = true
+    noclipConnection = RunService.Stepped:Connect(function()
+        for _, part in ipairs(character:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = false
+            end
+        end
+    end)
+end
+
+function disableNoclip()
+    if not noclipEnabled then return end
+    noclipEnabled = false
+    if noclipConnection then
+        noclipConnection:Disconnect()
+        noclipConnection = nil
+    end
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.CanCollide = true
+        end
+    end
+end
+
+local function findPlayer(text)
+    text = text:lower()
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p.Name:lower() == text or p.DisplayName:lower() == text then return p end
+    end
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p.Name:lower():find(text) or p.DisplayName:lower():find(text) then return p end
+    end
+end
+
+--// Anti-Teleport Script
+local antiTeleportEnabled = false
+local lastCF, stop, heartbeatConnection
+
+local function antiTeleport()
+    heartbeatConnection = game:GetService('RunService').Heartbeat:Connect(function()
+        if stop then
+            return
+        end
+        lastCF = player.Character:FindFirstChildOfClass('Humanoid').RootPart.CFrame
+    end)
+
+    player.Character:FindFirstChildOfClass('Humanoid').RootPart:GetPropertyChangedSignal('CFrame'):Connect(function()
+        stop = true
+        player.Character:FindFirstChildOfClass('Humanoid').RootPart.CFrame = lastCF
+        game:GetService('RunService').Heartbeat:Wait()
+        stop = false
+    end)
+
+    player.Character:FindFirstChildOfClass('Humanoid').Died:Connect(function()
+        heartbeatConnection:Disconnect()
+    end)
+end
+
+-- Toggle anti-teleport with /antiteleport
+local function toggleAntiTeleport()
+    if antiTeleportEnabled then
+        antiTeleportEnabled = false
+        if heartbeatConnection then
+            heartbeatConnection:Disconnect()
+        end
+        print("Anti-Teleport Disabled")
+    else
+        antiTeleportEnabled = true
+        antiTeleport()
+        print("Anti-Teleport Enabled")
+    end
+end
+
+-- Handle character spawn and removal for anti-teleport
+player.CharacterAdded:Connect(function(character)
+    repeat 
+        game:GetService('RunService').Heartbeat:Wait() 
+    until character:FindFirstChildOfClass('Humanoid')
+    repeat 
+        game:GetService('RunService').Heartbeat:Wait() 
+    until character:FindFirstChildOfClass('Humanoid').RootPart
+    if antiTeleportEnabled then
+        antiTeleport()
+    end
+end)
+
+-- Clean up on character removal for anti-teleport
+player.CharacterRemoving:Connect(function()
+    heartbeatConnection:Disconnect()
+end)
+
+local function gotoPlayer(name)
+    local p = findPlayer(name)
+    if p and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+        rootPart.CFrame = p.Character.HumanoidRootPart.CFrame + Vector3.new(0, 3, 0)
+    end
+end
+
+local function teleportToPlayer(name)
+    local p = findPlayer(name)
+    if p then
+        p.Character.HumanoidRootPart.CFrame = rootPart.CFrame
+    end
+end
+
+local function spectate(name)
+    local p = findPlayer(name)
+    if p and p.Character and p.Character:FindFirstChild("Humanoid") then
+        spectateTarget = p
+        camera.CameraSubject = p.Character.Humanoid
+        if spectateConnection then spectateConnection:Disconnect() end
+        spectateConnection = p.CharacterAdded:Connect(function(char)
+            camera.CameraSubject = char:WaitForChild("Humanoid")
+        end)
+    end
+end
+
+local function unspectate()
+    if spectateTarget then
+        camera.CameraSubject = originalCameraSubject
+        spectateTarget = nil
+        if spectateConnection then
+            spectateConnection:Disconnect()
+            spectateConnection = nil
+        end
+    end
+end
+
+local function resetCharacter()
+    if humanoid and humanoid.Health > 0 then
+        if rootPart then lastRepositionCFrame = rootPart.CFrame end
+        humanoid.Health = 0
+    end
+end
+
+local function healCharacter()
+    if humanoid and humanoid.Health > 0 then
+        if rootPart then lastRepositionCFrame = rootPart.CFrame end
+        storedTools = {}
+
+        for _, tool in ipairs(player.Backpack:GetChildren()) do
+            if tool:IsA("Tool") then
+                table.insert(storedTools, tool)
+                tool.Parent = nil
+            end
+        end
+        for _, tool in ipairs(character:GetChildren()) do
+            if tool:IsA("Tool") then
+                table.insert(storedTools, tool)
+                tool.Parent = nil
+            end
+        end
+
+        humanoid.Health = humanoid.MaxHealth
+    end
+end
+
+local function kickPlayer(reason)
+    -- Ensure the player has a reason
+    reason = reason or "Kicked by command."
+
+    -- Send a notification
+    StarterGui:SetCore("SendNotification", {
+        Title = "Kicking Player",
+        Text = "Player kicked: " .. reason,
+        Duration = 3
+    })
+    
+    -- Actually kick the player
+    task.wait(0.5)
+    player:Kick(reason)
+end
+
+--// Anti-AFK Script
+local function antiafk()
+    for _, connection in pairs(getconnections(game:GetService("Players").LocalPlayer.Idled)) do
+        connection:Disable()
+    end
+    StarterGui:SetCore("SendNotification", {
+        Title = "Anti-AFK Activated",
+        Text = "You will not be kicked for idling.",
+        Duration = 3
+    })
+end
+
+-- Run Commands
+local function runCommand(raw)
+    if commandPrefix ~= "" and not raw:lower():match("^" .. commandPrefix) then return end
+    local args = raw:sub(#commandPrefix + 1):split(" ")
+    local cmd = args[1]
+
+    -- Existing commands
+    if cmd == "vanish" then
+        vanish()
+    elseif cmd == "unvanish" then
+        unvanish()
+    elseif cmd == "noclip" then
+        enableNoclip()
+    elseif cmd == "unnoclip" then
+        disableNoclip()
+    elseif (cmd == "goto" or cmd == "tp" or cmd == "to") and args[2] then
+        gotoPlayer(args[2])
+    elseif cmd == "prefix" and args[2] then
+        if #args[2] <= 1 then
+            commandPrefix = args[2]
+            updatePlaceholder()
+        end
+    elseif (cmd == "spectate" or cmd == "view") and args[2] then
+        spectate(args[2])
+    elseif cmd == "unspectate" or cmd == "unview" then
+        unspectate()
+    elseif cmd == "commands" or cmd == "cmds" then
+        commandPanel.Visible = true
+    elseif cmd == "re" then
+        resetCharacter()
+    elseif cmd == "heal" then
+        healCharacter()
+    elseif cmd == "rejoin" then
+        TeleportService:Teleport(game.PlaceId, player)
+    elseif cmd == "kick" then
+        local reason = #args > 1 and table.concat(args, " ", 2) or "No reason provided"
+        kickPlayer(reason)
+    elseif cmd == "dex" then
+        loadstring(game:HttpGet("https://github.com/AZYsGithub/DexPlusPlus/releases/latest/download/out.lua"))()
+    elseif cmd == "telekinesis" then
+        local telekinesisScript = loadstring(game:HttpGet("https://raw.githubusercontent.com/randomstring0/Qwerty/refs/heads/main/qwerty1.lua"))
+        if telekinesisScript then
+            telekinesisScript()
+            print("Telekinesis script loaded successfully!")
+        else
+            warn("Failed to load the telekinesis script!")
+        end
+    elseif cmd == "antivoid" then
+        local antivoidScript = loadstring(game:HttpGet("https://pastebin.com/raw/5zcfvyhT"))()
+        if antivoidScript then
+            print("Anti-Void script loaded successfully!")
+        else
+            warn("Failed to load Anti-Void script!")
+        end
+    elseif cmd == "grabknife" then
+        local grabknifeScript = loadstring(game:HttpGet("https://rawscripts.net/raw/Universal-Script-Grab-knife-v4-24753"))()
+        if grabknifeScript then
+            print("GrabKnife script loaded successfully!")
+        else
+            warn("Failed to load the GrabKnife script!")
+        end
+    elseif cmd == "servermenu" then
+        -- Load the server hop script
+        local serverHopScript = loadstring(game:HttpGet("https://raw.githubusercontent.com/lumpiasallad/Roblox_ServerHop/refs/heads/main/ServerHopScript.lua"))
+        if serverHopScript then
+            serverHopScript()
+            print("Server Hop script loaded successfully!")
+        else
+            warn("Failed to load Server Hop script!")
+        end
+    elseif cmd == "jumppower" and args[2] then
+        local jumpPower = tonumber(args[2])
+        if jumpPower and jumpPower > 0 then
+            player.Character.Humanoid.JumpPower = jumpPower
+            StarterGui:SetCore("SendNotification", {
+                Title = "Jump Power Set",
+                Text = "Your Jump Power is now set to " .. jumpPower,
+                Duration = 3
+            })
+        else
+            StarterGui:SetCore("SendNotification", {
+                Title = "Invalid Jump Power",
+                Text = "Please provide a valid positive number for Jump Power.",
+                Duration = 3
+            })
+        end
+     elseif cmd == "speed" and args[2] then
+        local speed = tonumber(args[2])
+        if speed and speed > 0 then
+            player.Character.Humanoid.WalkSpeed = speed
+            StarterGui:SetCore("SendNotification", {
+                Title = "Speed Set",
+                Text = "Your walk speed is now set to " .. speed,
+                Duration = 3
+            })
+        else
+            StarterGui:SetCore("SendNotification", {
+                Title = "Invalid Speed",
+                Text = "Please provide a valid positive number for speed.",
+                Duration = 3
+            })
+        end
+    elseif cmd == "clicktp" then
+        -- Create the tool for click teleportation
+        local mouse = player:GetMouse()
+        local tool = Instance.new("Tool")
+        tool.RequiresHandle = false
+        tool.Name = "Click Teleport"
+        
+        -- When tool is activated (clicked)
+        tool.Activated:Connect(function()
+            local pos = mouse.Hit + Vector3.new(0, 2.5, 0)  -- Position with offset
+            pos = CFrame.new(pos.X, pos.Y, pos.Z)
+            player.Character.HumanoidRootPart.CFrame = pos
+        end)
+
+        tool.Parent = player.Backpack
+    -- Additional commands (like jumppower, speed etc.) can go here.
+    elseif cmd == "antiteleport" then
+        toggleAntiTeleport()
+    elseif cmd == "antifling" then
+        -- Load the AntiFling script
+        local antiflingScript = loadstring(game:HttpGet('https://raw.githubusercontent.com/Linux6699/DaHubRevival/main/AntiFling.lua'))()
+        if antiflingScript then
+            print("AntiFling script loaded successfully!")
+        else
+            warn("Failed to load AntiFling script!")
+        end
+	 elseif cmd == "clientserveradmin" then
+         loadstring(game:HttpGet("https://raw.githubusercontent.com/gObl00x/Pendulum-Fixed-AND-Others-Scripts/refs/heads/main/Server%20Admin"))()
+     elseif cmd == "feserveradmin" then
+         loadstring(game:HttpGet("https://raw.githubusercontent.com/ONEReverseCard/My-Scripts/main/Netless%20Server%20Admin.md"))()
+      --server admin animations
+	 elseif cmd == "antiafk" then
+        antiafk()
+     elseif cmd == "clientnukeclear" then
+        local nukeclearScript = loadstring(game:HttpGet("https://raw.githubusercontent.com/Johan319/fe-nuke-launcher/refs/heads/main/fe%20nuke%20laucher"))()
+        if nukeclearScript then
+            print("Nuke script loaded successfully!")
+        else
+            warn("Failed to load the Nuke script!")
+        end
+	elseif cmd == "Backdoor" then
+        local BackdoorScript = loadstring(game:HttpGet('https://raw.githubusercontent.com/Its-LALOL/LALOL-Hub/main/Backdoor-Scanner/script'))()
+        if BackdoorScript then
+            print("Backdoor script loaded successfully!")
+        else
+            warn("Failed to load the Backdoor script!")
+        end
+	elseif cmd == "aimviewerspanel" then
+        local aimviewerspanelScript = loadstring(game:HttpGet("https://raw.githubusercontent.com/Johan319/Panel-aim-viewers-made-by-Johan.K.P/refs/heads/main/panel%20aim%20viewers%20made%20by%20Johan.K.P"))()
+        if aimviewerspanelScript then
+            print("aimviewerspanel script loaded successfully!")
+        else
+            warn("Failed to load the aimviewerspanel script!")
+        end
+	elseif cmd == "fefakelag" then
+        local fefakelagScript = loadstring(game:HttpGet("https://raw.githubusercontent.com/DROID-cell-sys/ANTI-UTTP-SCRIPTT/refs/heads/main/EGOR%20SCRIPT%20BY%20ANTI-UTTP"))()
+		local fefakelagScript = loadstring(game:HttpGet("https://rawscripts.net/raw/Universal-Script-Fake-lag-41217"))()
+        if fefakelagScript then
+            print("fefakelag script loaded successfully!")
+        else
+            warn("Failed to load the fefakelag script!")
+        end
+	elseif cmd == "infjump" then
+        local infjumpScript = loadstring(game:HttpGet("https://raw.githubusercontent.com/Johan319/fe-infjump-/refs/heads/main/fe%20infjump"))()
+        if infjumpScript then
+            print("infjump script loaded successfully!")
+        else
+            warn("Failed to load the infjump script!")
+        end	
+	elseif cmd == "fechatadmin" then
+        local fechatadminScript = loadstring(game:HttpGet("https://raw.githubusercontent.com/Johan319/fe-chat-admin/refs/heads/main/fe%20chat%20admin"))()
+        if fechatadminScript then
+            print("fechatadmin script loaded successfully!")
+        else
+            warn("Failed to load the fechatadmin script!")
+        end	
+    else
+        print("Unknown Command")
+    end
+end
+
+-- Suggestions
+local fading = false
+local suggestionTweenInfo = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+commandBar:GetPropertyChangedSignal("Text"):Connect(function()
+    if fading then return end
+    local text = commandBar.Text:lower()
+    if commandPrefix ~= "" and not text:match("^" .. commandPrefix) then
+        if suggestionFrame.Visible then
+            fading = true
+            local tween = TweenService:Create(suggestionFrame, suggestionTweenInfo, {BackgroundTransparency = 1})
+            tween:Play()
+            tween.Completed:Wait()
+            suggestionFrame.Visible = false
+            fading = false
+        end
+        return
+    end
+    text = text:sub(#commandPrefix + 1)
+    local matches = {}
+    for _, cmd in ipairs(availableCommands) do
+        if cmd:sub(1, #text) == text then table.insert(matches, commandPrefix .. cmd) end
+    end
+    if #matches == 0 then
+        if suggestionFrame.Visible then
+            fading = true
+            local tween = TweenService:Create(suggestionFrame, suggestionTweenInfo, {BackgroundTransparency = 1})
+            tween:Play()
+            tween.Completed:Wait()
+            suggestionFrame.Visible = false
+            fading = false
+        end
+        return
+    end
+    suggestionLabel.Text = table.concat(matches, "\n")
+    if not suggestionFrame.Visible then suggestionFrame.Visible = true end
+end)
+
+-- Toggle Command Bar
+local function toggleCommandBar(show)
+    local t = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    TweenService:Create(commandBar, t, {TextTransparency = show and 0 or 1}):Play()
+    TweenService:Create(commandBar, t, {BackgroundTransparency = show and 0.5 or 1}):Play()
+    TweenService:Create(suggestionFrame, t, {BackgroundTransparency = show and 0.5 or 1}):Play()
+    if show then
+        commandBar.Visible = true
+        task.wait(0.3)
+        commandBar:CaptureFocus()
+    else
+        task.wait(0.3)
+        commandBar.Visible = false
+        suggestionFrame.Visible = false
+    end
+end
+
+-- Input Handler
+UserInputService.InputBegan:Connect(function(input, processed)
+    if processed then return end
+    if input.KeyCode == Enum.KeyCode.F2 then
+        toggleCommandBar(not commandBar.Visible)
+    elseif input.KeyCode == Enum.KeyCode.Escape then
+        if commandBar.Visible then toggleCommandBar(false) end
+    elseif input.KeyCode == Enum.KeyCode.Return then
+        if commandBar.Visible and #commandBar.Text > 0 then
+            runCommand(commandBar.Text)
+            commandBar.Text = ""
+            toggleCommandBar(false)
+        end
+    end
+end)
+
+-- Chat command
+player.Chatted:Connect(runCommand)
